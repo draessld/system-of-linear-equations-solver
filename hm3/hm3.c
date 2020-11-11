@@ -7,7 +7,8 @@
 
 #define EPSILON 1e-5
 
-size_t n;
+size_t n;   //  matrix/vector size
+int k = 10; //  max steps
 
 //  parsing setting
 const char *argp_program_version = "1.0";
@@ -15,17 +16,20 @@ const char *argp_program_bug_address = "<draesdom@cvut.cz>";
 static char doc[] = "Solve algebraic equations";
 static char args_doc[] = "[FILENAMES]...";
 static struct argp_option options[] = {
-    {"2da", 'a', 0, 0, "Save matrix as 2d array format."},
-    {"gdm", 'g', 0, 0, "Use gradient descent method."},
+    {"2d-array", 'a', 0, 0, "Save matrix as 2d array format."},
+    {"gradient-descentd", 'g', 0, 0, "Use gradient descent method."},
+    {"conjugate-gradient", 'c', 0, 0, "Use conjugate gradient method."},
     {"output", 'o', "OUTFILE", 0, "Output file path."},
     {"size", 'n', "N", 0, "squared matrix size"},
+    {"number--of--steps", 'k', "K", 0, "maximal number of iterative steps"},
     {0}};
 
 struct arguments
 {
     enum method
     {
-        METHOD_GD
+        METHOD_GD,
+        METHOD_CG
     } method;
     enum format
     {
@@ -56,6 +60,9 @@ char *method_to_string(enum method a)
     {
     case METHOD_GD:
         return "gradient descent method";
+        break;
+    case METHOD_CG:
+        return "conjugate gradient method";
         break;
     default:
         return "unknown_method";
@@ -105,6 +112,23 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state)
             }
         }
         break;
+    case 'c':
+        //  check if method already setted
+        if (arguments->method != METHOD_CG)
+        {
+            char c;
+            printf("method already setted on %s. Replace it (y/n):", method_to_string(arguments->method));
+            while (((c != 'n') && (c != 'y')))
+            {
+                scanf(" %c", &c);
+            }
+            if (c == 'y')
+            {
+                arguments->method = METHOD_CG;
+                printf("replacing on gradient descent method.\n");
+            }
+        }
+        break;
     //  output files
     case 'o':
         arguments->outfile = arg;
@@ -113,6 +137,9 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state)
     case 'n':
         arguments->count_n = false;
         n = atoi(arg);
+        break;
+    case 'k':
+        k = atoi(arg);
         break;
     case ARGP_KEY_ARG:
         return 0;
@@ -254,6 +281,34 @@ double multiply_v_v(double *a, double *b)
     return sum;
 }
 
+//  get number of equations by size of vector
+int read_n(const char *filename)
+{
+    double x;
+
+    FILE *pf;
+    pf = fopen(filename, "r");
+    if (pf == NULL)
+        return 0;
+
+    while (fscanf(pf, " %lf", &x) != EOF)
+    {
+        n++;
+    }
+
+    fclose(pf);
+    return 1;
+}
+
+//  check if vector is zero
+bool empty(double *x)
+{
+    for (int i = 0; i < n; i++)
+        if (x[i] != 0)
+            return 1;
+    return 0;
+}
+
 //  gradient descent method
 void gradient_descent_method(double **matrix, double *b, double *x)
 {
@@ -271,6 +326,8 @@ void gradient_descent_method(double **matrix, double *b, double *x)
     double *r = (double *)malloc(n * sizeof(double));
     muptiply_m_v(matrix, x, pom);
     subtract_v_v(b, pom, pom);
+    if (empty(pom))
+        return;
 
     copy_vector(pom, r);
     double lb = vector_lenght(b);
@@ -305,23 +362,73 @@ void gradient_descent_method(double **matrix, double *b, double *x)
     free(r);
 }
 
-//  get number of equations by size of vector
-int read_n(const char *filename)
+double gen_vector_lenght(double *a, double **A)
 {
-    double x;
+    double r[n];
+    muptiply_m_v(A, a, r);
+    return multiply_v_v(a, r);
+}
 
-    FILE *pf;
-    pf = fopen(filename, "r");
-    if (pf == NULL)
-        return 0;
-
-    while (fscanf(pf, " %lf", &x) != EOF)
+//  conjugate gradient method
+void conjugate_gradient_method(double **A, double *b, double *xk)
+{
+    //  initialization vectors
+    double sk[n];
+    double pom1[n];
+    double rk[n];
+    // double *rk = (double *)malloc(n * sizeof(double));
+    // double *rk_1 = (double *)malloc(n * sizeof(double));
+    
+    for (int i = 0; i < n; i++)
     {
-        n++;
+        xk[i] = 0;
+        sk[i] = 0;
+        pom1[i] = 0;
+        rk[i] = 0;
+        // rk_1[i] = 0;
     }
 
-    fclose(pf);
-    return 1;
+    // rk = b - A*xk
+    muptiply_m_v(A, xk, rk);
+    subtract_v_v(b, rk, rk);
+
+    // sk = rk
+    copy_vector(rk, sk);
+
+    double ak = 0; //  lenght of step
+    double bk = 0; //  pom constant
+    double rho = multiply_v_v(rk, rk);
+
+    for (int i = 0; i < k; i++)
+    {
+        //  ak = rk'*rk / sk'*A*sk
+        muptiply_m_v(A, sk, pom1);
+        ak = rho / multiply_v_v(sk, pom1);
+        
+        //  rk_1 = rk - ak*A*sk
+        // muptiply_m_v(A, sk, pom1);
+        multiply_v_c(pom1, ak, pom1);
+        subtract_v_v(rk, pom1, rk);
+        
+        //  xk_1 = xk + ak*sk
+        multiply_v_c(sk, ak, pom1);
+        addition_v_v(xk, pom1, xk);
+        
+        //  time to end?
+        if (gen_vector_lenght(rk, A) < EPSILON)
+            break;
+
+        //  bk = rk_1' * rk_1 / rk' * rk
+        bk = rho;
+        rho = multiply_v_v(rk, rk);
+        bk = rho/bk;
+        // bk = rho / multiply_v_v(rk, rk);
+
+        //  sk_1 = rk_1 + bk*sk
+        multiply_v_c(sk, bk, sk);
+        addition_v_v(rk, sk, sk);
+        // rk = rk_1;
+    }
 }
 
 //  main
@@ -415,7 +522,8 @@ int main(int argc, char *argv[])
     case METHOD_GD:
         gradient_descent_method(matrix, vector, output);
         break;
-
+    case METHOD_CG:
+        conjugate_gradient_method(matrix, vector, output);
     default:
         break;
     }
