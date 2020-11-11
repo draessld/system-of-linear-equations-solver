@@ -10,6 +10,10 @@
 size_t n;   //  matrix/vector size
 int k = 10; //  max steps
 
+//-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+//  parser part
+//-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+
 //  parsing setting
 const char *argp_program_version = "1.0";
 const char *argp_program_bug_address = "<draesdom@cvut.cz>";
@@ -29,11 +33,13 @@ struct arguments
     enum method
     {
         METHOD_GD,
-        METHOD_CG
+        METHOD_CG,
+        NO_METHOD
     } method;
     enum format
     {
-        FORMAT_2D
+        FORMAT_2D,
+        NO_FORMAT
     } format;
     bool count_n;
     char *outfile;
@@ -79,7 +85,7 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state)
     //  matrix format keys
     case 'a':
         //  check if format already setted
-        if (arguments->format != FORMAT_2D)
+        if (arguments->format != NO_FORMAT)
         {
             char c = 'c';
             printf("matrix format already setted on %s. Replace it (y/n):", format_to_string(arguments->format));
@@ -93,11 +99,13 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state)
                 printf("replacing on 2D array format.\n");
             }
         }
+        else
+            arguments->format = FORMAT_2D;
         break;
     //  method keys
     case 'g':
         //  check if method already setted
-        if (arguments->method != METHOD_GD)
+        if (arguments->method != NO_METHOD)
         {
             char c;
             printf("method already setted on %s. Replace it (y/n):", method_to_string(arguments->method));
@@ -111,10 +119,12 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state)
                 printf("replacing on gradient descent method.\n");
             }
         }
+        else
+            arguments->method = METHOD_GD;
         break;
     case 'c':
         //  check if method already setted
-        if (arguments->method != METHOD_CG)
+        if (arguments->method != NO_METHOD)
         {
             char c;
             printf("method already setted on %s. Replace it (y/n):", method_to_string(arguments->method));
@@ -127,6 +137,10 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state)
                 arguments->method = METHOD_CG;
                 printf("replacing on gradient descent method.\n");
             }
+        }
+        else
+        {
+            arguments->method = METHOD_CG;
         }
         break;
     //  output files
@@ -151,14 +165,9 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state)
 
 static struct argp argp = {options, parse_opt, args_doc, doc, 0, 0, 0};
 
-//  return lenght of vector
-double vector_lenght(double *vector)
-{
-    double sum = 0;
-    for (int i = 0; i < n; i++)
-        sum += pow(vector[i], 2.);
-    return sqrt(sum);
-}
+//-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+//  printers
+//-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 
 //  control print of matrix
 void print_m(double **a)
@@ -179,6 +188,10 @@ void print_v(double *b)
         printf("%lf ", b[j]);
     printf("\n");
 }
+
+//-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+//  file read/write functions
+//-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 
 //  read matrix as 2d
 int read_matrix(double **a, const char *filename)
@@ -229,8 +242,31 @@ int write_output(double *a, const char *filename)
     return 1;
 }
 
+//  get number of equations by size of vector
+int read_n(const char *filename)
+{
+    double x;
+
+    FILE *pf;
+    pf = fopen(filename, "r");
+    if (pf == NULL)
+        return 0;
+
+    while (fscanf(pf, " %lf", &x) != EOF)
+    {
+        n++;
+    }
+
+    fclose(pf);
+    return 1;
+}
+
+//-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+//  basic calculations
+//-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+
 //  matrix * column vector
-void muptiply_m_v(double **a, double *b, double *res)
+void multiply_m_v(double **a, double *b, double *res)
 {
     for (int i = 0; i < n; i++)
     {
@@ -281,26 +317,7 @@ double multiply_v_v(double *a, double *b)
     return sum;
 }
 
-//  get number of equations by size of vector
-int read_n(const char *filename)
-{
-    double x;
-
-    FILE *pf;
-    pf = fopen(filename, "r");
-    if (pf == NULL)
-        return 0;
-
-    while (fscanf(pf, " %lf", &x) != EOF)
-    {
-        n++;
-    }
-
-    fclose(pf);
-    return 1;
-}
-
-//  check if vector is zero
+//  check if vector = zero vector
 bool empty(double *x)
 {
     for (int i = 0; i < n; i++)
@@ -309,64 +326,73 @@ bool empty(double *x)
     return 0;
 }
 
+//  return vector size
+double vector_size(double *vector)
+{
+    double sum = 0;
+    for (int i = 0; i < n; i++)
+        sum += pow(vector[i], 2.);
+    return sqrt(sum);
+}
+
+//  return size
+double gen_vector_size(double *a, double **A)
+{
+    double r[n];
+    multiply_m_v(A, a, r);
+    return multiply_v_v(a, r);
+}
+
+//-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+//  methods
+//-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+
 //  gradient descent method
-void gradient_descent_method(double **matrix, double *b, double *x)
+void gradient_descent_method(double **A, double *b, double *xk)
 {
 
     //  initialization vector x
-    double pom[n];
-    double pom1[n];
+    double Ax[n];
+    double rk[n];
+    double ar[n];
     for (int i = 0; i < n; i++)
     {
-        x[i] = 0;
-        pom[i] = 0;
-        pom1[i] = 0;
+        xk[i] = 0;
+        rk[i] = 0;
+        Ax[i] = 0;
+        ar[i] = 0;
     }
 
-    double *r = (double *)malloc(n * sizeof(double));
-    muptiply_m_v(matrix, x, pom);
-    subtract_v_v(b, pom, pom);
-    if (empty(pom))
+    double ak = 0; //  lenght of step
+
+    //  rk = b - A*xk
+    multiply_m_v(A, xk, Ax);
+    subtract_v_v(b, Ax, rk);
+
+    double rho = multiply_v_v(rk, rk);
+    if (sqrt(rho) == 0)
         return;
 
-    copy_vector(pom, r);
-    double lb = vector_lenght(b);
-    double lr = 0;
-    double a = 0; //  lenght of step
-    double e = 0; //  difference
-    bool p = true;
-
     //  lets do it! :))
-    do
+    for (int i = 0; i < k; i++)
     {
-        muptiply_m_v(matrix, r, pom);
-        if (p)
-        {
-            p = false;
-            a = multiply_v_v(r, r) / multiply_v_v(r, pom);
-        }
-        else
-            a = pow(lr, 2) / multiply_v_v(r, pom);
-        multiply_v_c(r, a, pom1);
-        addition_v_v(x, pom1, x);
-        multiply_v_c(pom, a, pom1);
-        subtract_v_v(r, pom1, r);
-        lr = vector_lenght(r);
-        if (lb == 0)
-            e = lr;
-        else
-            e = lr / lb;
-        // printf("e: %lf \n",e);
-    } while (e > EPSILON);
+        //  ak = rk'*rk / rk'*A*rk
+        multiply_m_v(A, rk, Ax);
+        ak = rho / multiply_v_v(rk, Ax);
 
-    free(r);
-}
+        //  xk_1 = xk + ak*rk
+        multiply_v_c(rk, ak, ar);
+        addition_v_v(xk, ar, xk);
 
-double gen_vector_lenght(double *a, double **A)
-{
-    double r[n];
-    muptiply_m_v(A, a, r);
-    return multiply_v_v(a, r);
+        //  rk = b - A*xk
+        multiply_v_c(Ax, ak, Ax);
+        subtract_v_v(rk, Ax, rk);
+
+        rho = multiply_v_v(rk, rk);
+
+        if (sqrt(rho) < EPSILON)
+            break;
+    }
 }
 
 //  conjugate gradient method
@@ -376,20 +402,16 @@ void conjugate_gradient_method(double **A, double *b, double *xk)
     double sk[n];
     double pom1[n];
     double rk[n];
-    // double *rk = (double *)malloc(n * sizeof(double));
-    // double *rk_1 = (double *)malloc(n * sizeof(double));
-    
     for (int i = 0; i < n; i++)
     {
         xk[i] = 0;
         sk[i] = 0;
         pom1[i] = 0;
         rk[i] = 0;
-        // rk_1[i] = 0;
     }
 
     // rk = b - A*xk
-    muptiply_m_v(A, xk, rk);
+    multiply_m_v(A, xk, rk);
     subtract_v_v(b, rk, rk);
 
     // sk = rk
@@ -398,47 +420,49 @@ void conjugate_gradient_method(double **A, double *b, double *xk)
     double ak = 0; //  lenght of step
     double bk = 0; //  pom constant
     double rho = multiply_v_v(rk, rk);
+    if (sqrt(rho) == 0)
+        return;
 
     for (int i = 0; i < k; i++)
     {
         //  ak = rk'*rk / sk'*A*sk
-        muptiply_m_v(A, sk, pom1);
+        multiply_m_v(A, sk, pom1);
         ak = rho / multiply_v_v(sk, pom1);
-        
+
         //  rk_1 = rk - ak*A*sk
-        // muptiply_m_v(A, sk, pom1);
         multiply_v_c(pom1, ak, pom1);
         subtract_v_v(rk, pom1, rk);
-        
+
         //  xk_1 = xk + ak*sk
         multiply_v_c(sk, ak, pom1);
         addition_v_v(xk, pom1, xk);
-        
+
         //  time to end?
-        if (gen_vector_lenght(rk, A) < EPSILON)
+        if (gen_vector_size(rk, A) < EPSILON)
             break;
 
         //  bk = rk_1' * rk_1 / rk' * rk
         bk = rho;
         rho = multiply_v_v(rk, rk);
-        bk = rho/bk;
-        // bk = rho / multiply_v_v(rk, rk);
+        bk = rho / bk;
 
         //  sk_1 = rk_1 + bk*sk
         multiply_v_c(sk, bk, sk);
         addition_v_v(rk, sk, sk);
-        // rk = rk_1;
     }
 }
 
+//-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 //  main
+//-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+
 int main(int argc, char *argv[])
 {
     struct arguments arguments;
 
     //  default arguments
-    arguments.format = FORMAT_2D; //  default 2d array atric format
-    arguments.method = METHOD_GD; //  default gradient descent method
+    arguments.format = NO_FORMAT; //  default 2d array atric format
+    arguments.method = NO_METHOD; //  default gradient descent method
     arguments.count_n = true;     //  default unknown size of matrix - calculate it while reading
     arguments.outfile = NULL;     //  default output file - no file
 
@@ -459,9 +483,10 @@ int main(int argc, char *argv[])
 
     //  print basic information about calculation
     printf("There are %ld algebraic equations to solve\n", n);
+    printf("Procces terminated after %d steps\n", k);
     printf("Matrix format: %s.\n", format_to_string(arguments.format));
     printf("Method: %s.\n", method_to_string(arguments.method));
-    printf("------------------------------------------\n");
+    printf("Method: %s.\n", method_to_string(arguments.method));
     printf("INPUTS READING:\n");
     printf("------------------------------------------\n");
 
