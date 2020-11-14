@@ -8,4 +8,4 @@ hm3/hm3
 **/vector*.txt
 zapisky.txt
 *.png
-data/*
+**/data
