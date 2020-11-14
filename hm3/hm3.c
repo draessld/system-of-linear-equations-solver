@@ -9,6 +9,7 @@
 
 size_t n;   //  matrix/vector size
 int k = 10; //  max steps
+size_t z;   //  cr number values
 
 //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 //  parser part
@@ -21,11 +22,12 @@ static char doc[] = "Solve algebraic equations";
 static char args_doc[] = "[FILENAMES]...";
 static struct argp_option options[] = {
     {"2d-array", 'a', 0, 0, "Save matrix as 2d array format."},
+    {"compess-row", 'r', 0, 0, "Save matrix as compress row."},
     {"gradient-descentd", 'g', 0, 0, "Use gradient descent method."},
     {"conjugate-gradient", 'c', 0, 0, "Use conjugate gradient method."},
     {"output", 'o', "OUTFILE", 0, "Output file path."},
     {"size", 'n', "N", 0, "squared matrix size"},
-    {"number--of--steps", 'k', "K", 0, "maximal number of iterative steps"},
+    {"number-of-steps", 'k', "K", 0, "maximal number of iterative steps"},
     {0}};
 
 struct arguments
@@ -39,6 +41,7 @@ struct arguments
     enum format
     {
         FORMAT_2D,
+        FORMAT_CR,
         NO_FORMAT
     } format;
     bool count_n;
@@ -52,6 +55,9 @@ char *format_to_string(enum format a)
     {
     case FORMAT_2D:
         return "2d_array";
+        break;
+    case FORMAT_CR:
+        return "compress row";
         break;
     default:
         return "unknown_format";
@@ -101,6 +107,25 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state)
         }
         else
             arguments->format = FORMAT_2D;
+        break;
+    case 'r':
+        //  check if format already setted
+        if (arguments->format != NO_FORMAT)
+        {
+            char c = 'c';
+            printf("matrix format already setted on %s. Replace it (y/n):", format_to_string(arguments->format));
+            while (((c != 'n') && (c != 'y')))
+            {
+                scanf(" %c", &c);
+            }
+            if (c == 'y')
+            {
+                arguments->method = FORMAT_CR;
+                printf("replacing on compress row format.\n");
+            }
+        }
+        else
+            arguments->format = FORMAT_CR;
         break;
     //  method keys
     case 'g':
@@ -189,12 +214,34 @@ void print_v(double *b)
     printf("\n");
 }
 
+//  control print csr matrix
+void print_csr(double **a, int *adr)
+{
+    printf("values: ");
+    for (int i = 0; i < z; i++)
+    {
+        printf("%-5lf ", a[1][i]);
+    }
+    printf("\ncol: ");
+
+    for (int i = 0; i < z; i++)
+    {
+        printf("%-5lf ", a[0][i]);
+    }
+
+    printf("\nrow_adr: ");
+    for (int i = 0; i < n; ++i)
+        printf("%-5d ", adr[i]);
+
+    printf("\n");
+}
+
 //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 //  file read/write functions
 //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 
 //  read matrix as 2d
-int read_matrix(double **a, const char *filename)
+int read_2d_matrix(double **a, const char *filename)
 {
 
     FILE *pf;
@@ -212,6 +259,56 @@ int read_matrix(double **a, const char *filename)
     return 1;
 }
 
+//  read matrix as compressed row
+int read_csr_matrix(double **val, int *adr, const char *filename)
+{
+    FILE *pf;
+    pf = fopen(filename, "r");
+    if (pf == NULL)
+        return 0;
+
+    fscanf(pf, "%ld %ld", &n, &z);
+    // printf("%ld, %ld\n", n, z);
+    val[0] = (double *)malloc(z * sizeof(double)); //  column index
+    val[1] = (double *)malloc(z * sizeof(double)); //  value
+    adr = (int *)realloc(adr, n);                  //  index of first row value
+
+    //  first read
+    int d = 0;
+    int old_d = 0;
+    int adr_i = 0;
+
+    //  next read
+    for (int i = 0; i < z; ++i)
+    {
+        fscanf(pf, " %d %lf %lf", &d, &val[0][i], &val[1][i]);
+        // printf("%d na indexu %d - %d\n", d,i, d - old_d);
+        if (d - old_d == 1)
+        { //  new value on next line
+            adr[adr_i] = i;
+            // printf(" pisu %d na index %d\n", i,adr_i);
+            old_d = d;
+            adr_i++;
+        }
+        else if (d - old_d > 1)
+        { //    d-old_d zero rows - write -1 and move
+            for (int j = 0; j < d - old_d - 1; j++)
+            {
+                adr[adr_i] = -1;
+                // printf(" pisu -1 na index %d\n", adr_i);
+                adr_i++;
+            }
+            // printf(" pisu %d na index %d\n", i,adr_i);
+            adr[adr_i] = i;
+            adr_i++;
+            old_d = d;
+        }
+    }
+
+    fclose(pf);
+    return 1;
+}
+
 //  read vector
 int read_vector(double *a, const char *filename)
 {
@@ -221,7 +318,7 @@ int read_vector(double *a, const char *filename)
         return 0;
 
     for (int i = 0; i < n; ++i)
-        fscanf(pf, "%lf", &a[i]);
+        fscanf(pf, "%lf\n", &a[i]);
 
     fclose(pf);
     return 1;
@@ -277,6 +374,19 @@ void multiply_m_v(double **a, double *b, double *res)
             res[i] += (a[i][j] * b[j]);
             // printf(" = %lf; \n",res[j]);
         }
+    }
+}
+
+void csr_multiply_m_v(double **a, int *rowPtr, double *b, double *res)
+{
+    for (int i = 0; i < n; i++)
+    {
+        res[i] = 0;
+        if (rowPtr[i] == -1)
+            res[i] = 0;
+        else
+            for (int k = rowPtr[i]; k < rowPtr[i + 1]; k++)
+                res[i] += a[1][k] * b[(int)a[0][k]];
     }
 }
 
@@ -486,12 +596,12 @@ int main(int argc, char *argv[])
     printf("Procces terminated after %d steps\n", k);
     printf("Matrix format: %s.\n", format_to_string(arguments.format));
     printf("Method: %s.\n", method_to_string(arguments.method));
-    printf("Method: %s.\n", method_to_string(arguments.method));
     printf("INPUTS READING:\n");
     printf("------------------------------------------\n");
 
     //  declare matrix
     double **matrix;
+    int *adr;
 
     // declare vector and allocate mem space
     double *vector = (double *)malloc(n * sizeof(double));
@@ -504,7 +614,17 @@ int main(int argc, char *argv[])
         matrix = (double **)malloc(n * sizeof(double *));
         for (int i = 0; i < n; i++)
             matrix[i] = (double *)malloc(n * sizeof(double));
-        if (read_matrix(matrix, matrix_input) == 0)
+        if (read_2d_matrix(matrix, matrix_input) == 0)
+        {
+            printf("filename %s does not exist", matrix_input);
+            return 1;
+        }
+        break;
+    case FORMAT_CR:
+        //  allocate mem space for 2d array
+        matrix = (double **)malloc(2 * sizeof(double *));
+        adr = (int *)malloc(1 * sizeof(int));
+        if (read_csr_matrix(matrix, adr, matrix_input) == 0)
         {
             printf("filename %s does not exist", matrix_input);
             return 1;
@@ -519,7 +639,7 @@ int main(int argc, char *argv[])
     //  log inform
     printf("Matrix successfuly readed.\n");
 
-    //  read vector
+    // read vector
     if (read_vector(vector, vector_input) == 0)
     {
         printf("filename %s does not exist", vector_input);
@@ -528,6 +648,9 @@ int main(int argc, char *argv[])
 
     //  log inform
     printf("Vector successfuly readed.\n");
+
+    // print_csr(matrix, adr);
+    // print_v(vector);
 
     //  declare output vector
     double *output = (double *)malloc(n * sizeof(double));
@@ -542,16 +665,18 @@ int main(int argc, char *argv[])
     gettimeofday(&start, NULL);
 
     //  switch by method
-    switch (arguments.method)
-    {
-    case METHOD_GD:
-        gradient_descent_method(matrix, vector, output);
-        break;
-    case METHOD_CG:
-        conjugate_gradient_method(matrix, vector, output);
-    default:
-        break;
-    }
+    // switch (arguments.method)
+    // {
+    // case METHOD_GD:
+    //     // gradient_descent_method(matrix, vector, output);
+    //     break;
+    // case METHOD_CG:
+    //     // conjugate_gradient_method(matrix, vector, output);
+    // default:
+    //     break;
+    // }
+
+    csr_multiply_m_v(matrix, adr, vector, output);
 
     //  log inform
     printf("Calculation done.\n");
@@ -579,7 +704,7 @@ int main(int argc, char *argv[])
         free(matrix);
     }
     free(vector);
-    free(output);
+    // free(output);
 
     return 0;
 }
