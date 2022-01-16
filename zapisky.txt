@@ -1,4 +1,0 @@
-pokud ma matice vsechna vlastni cisla kladna, pak je pozitivne definitni
-kdyz mam spocitane vlastni vektory a vlastni cisla, muzu zjistit jak bude vypadat inverzni matice
-inverzni matice se nikdy nepocita, protoze v praxi maji matice velmi mnoho nul a inverzni matice ma hodne cisel - musi se pocitat jako 2D matice-hodne mista zabira
-
